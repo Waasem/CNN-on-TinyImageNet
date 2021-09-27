@@ -1,7 +1,7 @@
 import torch
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-# import torch.nn.functional as F
+import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
 import argparse
@@ -14,11 +14,9 @@ import time
 from PIL import Image
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "?"
+os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda" if use_cuda else "cpu")
-
-parser = argparse.ArgumentParser(description="Train a deterministic CNN on CIFAR10 dataset")
 
 
 def parseClasses(file):
@@ -35,7 +33,7 @@ def parseClasses(file):
     return filenames, classes
 
 
-class TinyImageNet(torch.utils.Dataset):
+class TinyImageNet(torch.utils.data.Dataset):
     """TinyImageNet 200 validation dataloader."""
 
     def __init__(self, img_path, gt_path, class_to_idx=None, transform=None):
@@ -73,26 +71,27 @@ class Model(nn.Module):
         self.batchnorm1 = nn.BatchNorm2d(128)
         self.relu1 = nn.ReLU(inplace=True)
 
-        self.conv2 = nn.Conv2d(3, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+        self.conv2 = nn.Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
         self.batchnorm2 = nn.BatchNorm2d(128)
         self.relu2 = nn.ReLU(inplace=True)
-        self.maxpool2 = nn.MaxPool2d(kernel_size=2, stride=1)
+#         self.maxpool2 = nn.MaxPool2d(kernel_size=2, stride=1)
         # g2nn: ker_size=3, stride=2
 
-        self.conv3 = nn.Conv2d(3, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+        self.conv3 = nn.Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
         self.batchnorm3 = nn.BatchNorm2d(128)
         self.relu3 = nn.ReLU(inplace=True)
 
-        self.conv4 = nn.Conv2d(3, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+        self.conv4 = nn.Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
         self.batchnorm4 = nn.BatchNorm2d(128)
         self.relu4 = nn.ReLU(inplace=True)
-        self.maxpool4 = nn.MaxPool2d(kernel_size=2, stride=1)
+#         self.maxpool4 = nn.MaxPool2d(kernel_size=2, stride=1)
 
-        self.conv5 = nn.Conv2d(3, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+        self.conv5 = nn.Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
         self.batchnorm5 = nn.BatchNorm2d(128)
         self.relu5 = nn.ReLU(inplace=True)
-        self.maxpool5 = nn.MaxPool2d(kernel_size=2, stride=1)
+#         self.maxpool5 = nn.MaxPool2d(kernel_size=2, stride=1)
 
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.dropout1 = nn.Dropout(self.dropout_rate)
         self.fc1 = nn.Linear(in_features=128, out_features=400, bias=True)
         self.dropout2 = nn.Dropout(self.dropout_rate)
@@ -108,7 +107,8 @@ class Model(nn.Module):
         out = self.conv2(out)
         out = self.batchnorm2(out)
         out = self.relu2(out)
-        out = self.maxpool2(out)
+#         out = self.maxpool2(out)
+#         print("#### MAXPOOL1 #####", out.shape)
 
         out = self.conv3(out)
         out = self.batchnorm3(out)
@@ -117,22 +117,28 @@ class Model(nn.Module):
         out = self.conv4(out)
         out = self.batchnorm4(out)
         out = self.relu4(out)
-        out = self.maxpool4(out)
+#         out = self.maxpool4(out)
+#         print("#### MAXPOOL2 #####", out.shape)
 
         out = self.conv5(out)
         out = self.batchnorm5(out)
         out = self.relu5(out)
-        out = self.maxpool5(out)
+#         out = self.maxpool5(out)
+#         print("#### MAXPOOL3 #####", out.shape)
+        
+#         print(out.size())
+#         batch_size, channels, height, width = out.size()
+#         out = F.avg_pool2d(out, (1,1))
+#         out = torch.squeeze(out)
 
+        out = self.avg_pool(out)
+        out = out.view(out.size(0), -1)
         out = self.dropout1(out)
         out = self.fc1(out)
 
         out = self.dropout2(out)
         out = self.fc2(out)
-
-        # batch_size, channels, height, width = out.size()
-        # out = F.avg_pool2d(out, kernel_size=[height, width])
-        # out = torch.squeeze(out)
+       
 
         out = self.dropout3(out)
         out = self.fc3(out)
@@ -151,11 +157,13 @@ def adjust_lr(optimizer, cur_epoch, args):
 
 def train_epoch(model, train_loader, optimizer, criterion, cur_epoch, args):
     """Performs one epoch of training"""
-
+    
+    print("Training for epoch {}".format(cur_epoch))
     # enable the training mode
     model.train()
     train_loss = 0
     train_acc = 0
+    step = 0
     for cur_iter, (data, target) in enumerate(train_loader):
         # adjust the learning rate for this epoch
         adjust_lr(optimizer, cur_epoch=cur_epoch, args=args)
@@ -175,6 +183,13 @@ def train_epoch(model, train_loader, optimizer, criterion, cur_epoch, args):
         y_pred = preds.data.max(1)[1]
         acc = float(y_pred.eq(target.data).sum()) / len(data) * 100.
         train_acc += acc
+        
+        step += 1
+#         if step % 10 == 0:
+        print("\n[Epoch {:4d}: step {:4d}] Loss: {:2.3f}, Acc: {:.3f}%".format(cur_epoch, step, loss.data, acc), end='')
+#         for param_group in optimizer.param_groups:
+#             print(",  Current learning rate is: {}".format(param_group['lr']))
+            
     length = len(train_loader.dataset) // args.bs
     return train_loss/length, train_acc/length
 
@@ -202,7 +217,10 @@ def eval_epoch(model, test_loader, criterion):
 
 
 def main():
+    
     wandb.init(project='Deterministic-CNN-TinyImagenet')
+    parser = argparse.ArgumentParser(description="Train a deterministic CNN on CIFAR10 dataset")
+    
     parser.add_argument('--epochs', type=int, default=2, help='Number of epochs (Ideally: 100)')
     parser.add_argument('--bs', type=int, default=64, help='Training batch size (Ideally: 256)')
     parser.add_argument('--lrate', type=float, default=1e-1, help='Learning rate')
@@ -214,27 +232,14 @@ def main():
     args = parser.parse_args()
     wandb.config.update(args)
 
-    print('Config: Training= {}, epochs = {}, batch_size = {}, learning_rate = {}, weight_decay = {}, dropout_rate = {}'
-            .format(args.is_train, args.epochs, args.bs, args.lrate, args.wd, args.dropout))
-
-    # build model before loaders to ease debugging
-    model = Model(args)
-    if torch.cuda.device_count() > 1:
-        print('Using ', torch.cuda.device_count(), 'GPUs')
-        model = torch.nn.DataParallel(model)
-        model = model.to(device)
-    else:
-        model = model.to(device)
-    optimizer = optim.SGD(
-        model.parameters(), lr=args.lrate, momentum=args.momentum, weight_decay=args.wd, nesterov=True)
-    criterion = nn.CrossEntropyLoss().to(device)
+    print('Config: Training= {}, epochs = {}, batch_size = {}, learning_rate = {}, weight_decay = {}, dropout_rate = {}'.format(args.is_train, args.epochs, args.bs, args.lrate, args.wd, args.dropout))
 
     # Build loaders
     # get and set the dataset paths
     data_path = '/data/tinyimagenet200'
     traindir = os.path.join(data_path, 'train')
-    valdir = os.path.join(data_path, 'test', 'images')
-    valgtdir = os.path.join(data_path, 'test', 'val', 'val_annotations.txt')
+    valdir = os.path.join(data_path, 'val', 'images')
+    valgtdir = os.path.join(data_path, 'val', 'val_annotations.txt')
     print('train_directory={}, val_directory={}, val_ground_truth_directory={}'.format(traindir, valdir, valgtdir))
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -270,6 +275,18 @@ def main():
         pin_memory=True,
         drop_last=False)
 
+    
+    model = Model(args)
+    if torch.cuda.device_count() > 1:
+        print('Using ', torch.cuda.device_count(), 'GPUs')
+        model = torch.nn.DataParallel(model)
+        model = model.to(device)
+    else:
+        print('Using ', torch.cuda.device_count(), 'GPU')
+        model = model.to(device)
+    optimizer = optim.SGD(model.parameters(), lr=args.lrate, momentum=args.momentum, weight_decay=args.wd, nesterov=True)
+    criterion = nn.CrossEntropyLoss().to(device)
+    
     wandb.watch(model)
     start_time = time.time()
     print("Training starting now!")
