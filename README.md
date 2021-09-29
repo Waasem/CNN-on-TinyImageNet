@@ -1,2 +1,2 @@
-# deterministic-CNN-on-CIFAR10
+# deterministic-NN-on TinyImageNet200
 Train a CNN model on CIFAR-10 dataset.
